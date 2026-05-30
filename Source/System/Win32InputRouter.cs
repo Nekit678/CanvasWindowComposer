@@ -22,6 +22,7 @@ internal sealed class Win32InputRouter : IInputRouter, IDisposable
     private readonly RawMouseInput _mouse;
     private readonly MessageWindow _msgWindow;
     private readonly Win32EventRouter _winEvents;
+    private readonly IAppConfig _config;
 
     // Drainable mouse state, populated on the UI thread by DrainRing.
     private int _pendingPanDx;
@@ -40,6 +41,7 @@ internal sealed class Win32InputRouter : IInputRouter, IDisposable
     public event Action? ButtonDown;
     public event Action? SearchHotkey;
     public event Action? OverviewHotkey;
+    public event Action? RecoveryHotkey;
     public event Action? EscPressed;
 
     public void EnableEscHotkey()
@@ -62,12 +64,12 @@ internal sealed class Win32InputRouter : IInputRouter, IDisposable
 
     public Win32InputRouter(IAppConfig config)
     {
+        _config = config;
         _mouse = new RawMouseInput(config, OnInputFrame);
 
         _msgWindow = new MessageWindow();
-        _msgWindow.RegisterHandlers(
-            onSearchHotkey:   config.DisableSearch     ? null : () => SearchHotkey?.Invoke(),
-            onOverviewHotkey: config.DisableZoomHotkey ? null : () => OverviewHotkey?.Invoke());
+        ApplyConfig();
+        _config.Changed += OnConfigChanged;
 
         _winEvents = new Win32EventRouter();
         _winEvents.WindowMinimized += h => WindowMinimized?.Invoke(h);
@@ -80,6 +82,20 @@ internal sealed class Win32InputRouter : IInputRouter, IDisposable
         _winEvents.AltTabEnded     += () => AltTabEnded?.Invoke();
 
         _mouse.Install();
+    }
+
+    private void OnConfigChanged()
+    {
+        ApplyConfig();
+    }
+
+    private void ApplyConfig()
+    {
+        _msgWindow.RegisterHandlers(
+            onSearchHotkey:   _config.DisableSearch     ? null : () => SearchHotkey?.Invoke(),
+            onOverviewHotkey: _config.DisableZoomHotkey ? null : () => OverviewHotkey?.Invoke(),
+            onRecoveryHotkey: () => RecoveryHotkey?.Invoke());
+        _mouse.RefreshConfig();
     }
 
     /// <summary>
@@ -205,6 +221,7 @@ internal sealed class Win32InputRouter : IInputRouter, IDisposable
 
     public void Dispose()
     {
+        _config.Changed -= OnConfigChanged;
         DisableMiddleButtonBlock();
         _winEvents.Dispose();
         _mouse.Dispose();

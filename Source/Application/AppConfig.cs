@@ -1,6 +1,7 @@
 using System;
 using System.Collections.Generic;
 using System.IO;
+using System.Threading;
 
 namespace CanvasDesktop;
 
@@ -10,6 +11,8 @@ namespace CanvasDesktop;
 /// </summary>
 internal interface IAppConfig
 {
+    event Action? Changed;
+
     bool DisableSearch { get; }
     bool DisableAltPan { get; }
     bool DisableGreedyDraw { get; }
@@ -47,8 +50,11 @@ internal sealed class AppConfig : IAppConfig
     private const long ReloadDebounceMs = 200;
 
     private readonly IClock _clock;
+    private readonly SynchronizationContext? _syncContext;
     private FileSystemWatcher? _watcher;
     private long _lastReloadTick;
+
+    public event Action? Changed;
 
     public bool DisableSearch { get; private set; }
     public bool DisableAltPan { get; private set; }
@@ -60,6 +66,7 @@ internal sealed class AppConfig : IAppConfig
     public AppConfig(IClock? clock = null)
     {
         _clock = clock ?? SystemClock.Instance;
+        _syncContext = SynchronizationContext.Current;
     }
 
     public void Load()
@@ -84,6 +91,7 @@ internal sealed class AppConfig : IAppConfig
     {
         ShowScreenFixedWindowsDuringPan = value;
         WriteBool("ShowScreenFixedWindowsDuringPan", value);
+        RaiseChanged();
     }
 
     /// <summary>Watch config.ini for changes and reload automatically.</summary>
@@ -107,8 +115,23 @@ internal sealed class AppConfig : IAppConfig
         if (now - _lastReloadTick < ReloadDebounceMs) return;
         _lastReloadTick = now;
 
-        try { Load(); }
+        try
+        {
+            Load();
+            RaiseChanged();
+        }
         catch { }
+    }
+
+    private void RaiseChanged()
+    {
+        Action? handler = Changed;
+        if (handler == null) return;
+
+        if (_syncContext != null)
+            _syncContext.Post(_ => handler.Invoke(), null);
+        else
+            handler.Invoke();
     }
 
     private static void WriteDefault()

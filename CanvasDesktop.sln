@@ -1,0 +1,28 @@
+﻿
+Microsoft Visual Studio Solution File, Format Version 12.00
+# Visual Studio Version 17
+VisualStudioVersion = 17.0.31903.59
+MinimumVisualStudioVersion = 10.0.40219.1
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CanvasDesktop", "CanvasDesktop.csproj", "{45A6F511-26D2-4679-ACC5-AA06751FF96F}"
+EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "CanvasDesktop.Tests", "Tests\CanvasDesktop.Tests.csproj", "{01EF4ADE-73D7-4FAD-A412-EFAF85D51674}"
+EndProject
+Global
+	GlobalSection(SolutionConfigurationPlatforms) = preSolution
+		Debug|Any CPU = Debug|Any CPU
+		Release|Any CPU = Release|Any CPU
+	EndGlobalSection
+	GlobalSection(SolutionProperties) = preSolution
+		HideSolutionNode = FALSE
+	EndGlobalSection
+	GlobalSection(ProjectConfigurationPlatforms) = postSolution
+		{45A6F511-26D2-4679-ACC5-AA06751FF96F}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{45A6F511-26D2-4679-ACC5-AA06751FF96F}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{45A6F511-26D2-4679-ACC5-AA06751FF96F}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{45A6F511-26D2-4679-ACC5-AA06751FF96F}.Release|Any CPU.Build.0 = Release|Any CPU
+		{01EF4ADE-73D7-4FAD-A412-EFAF85D51674}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{01EF4ADE-73D7-4FAD-A412-EFAF85D51674}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{01EF4ADE-73D7-4FAD-A412-EFAF85D51674}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{01EF4ADE-73D7-4FAD-A412-EFAF85D51674}.Release|Any CPU.Build.0 = Release|Any CPU
+	EndGlobalSection
+EndGlobal

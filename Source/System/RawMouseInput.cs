@@ -30,7 +30,7 @@ internal sealed class RawMouseInput : IDisposable
     private static readonly IntPtr HWND_MESSAGE = new(-3);
 
     private readonly IAppConfig _config;
-    private readonly MouseCurveScaler? _curve;
+    private MouseCurveScaler? _curve;
 
     private volatile HashSet<IntPtr> _extraPanSurfaces = new();
     public void SetExtraPanSurfaces(IEnumerable<IntPtr> handles)
@@ -93,7 +93,12 @@ internal sealed class RawMouseInput : IDisposable
             Interlocked.Exchange(ref _uiPostPending, 0);
             _onFrame();
         };
-        _curve = config.DisableMouseCurve ? null : new MouseCurveScaler();
+        RefreshConfig();
+    }
+
+    public void RefreshConfig()
+    {
+        _curve = _config.DisableMouseCurve ? null : new MouseCurveScaler();
     }
 
     public void Install()
@@ -205,9 +210,13 @@ internal sealed class RawMouseInput : IDisposable
     /// </summary>
     private unsafe bool WaitForInput(HANDLE shutdown)
     {
-        // By accident also clears stale WM_INPUT flag, which would cause MsgWaitForMultipleObjects to wait
+        // If raw input is already queued, drain immediately. The call also
+        // clears the "new input" bit so MsgWaitForMultipleObjects can block
+        // for genuinely new input instead of spinning on stale queue state.
         const uint QS_RAWINPUT = (uint)QUEUE_STATUS_FLAGS.QS_RAWINPUT;
-        if ((PInvoke.GetQueueStatus(QUEUE_STATUS_FLAGS.QS_RAWINPUT) & QS_RAWINPUT) != QS_RAWINPUT)
+        uint status = PInvoke.GetQueueStatus(QUEUE_STATUS_FLAGS.QS_RAWINPUT);
+        if ((status & QS_RAWINPUT) == QS_RAWINPUT ||
+            (((status >> 16) & QS_RAWINPUT) == QS_RAWINPUT))
         {
             return true;
         }
@@ -287,7 +296,8 @@ internal sealed class RawMouseInput : IDisposable
         {
             int dx = mouse.lLastX;
             int dy = mouse.lLastY;
-            if (_curve != null)
+            MouseCurveScaler? curve = _curve;
+            if (curve != null)
             {
                 // Estimate native HID polls represented: gap_ms / poll_interval.
                 // Per-device interval is queried lazily from the HID driver
@@ -298,7 +308,7 @@ internal sealed class RawMouseInput : IDisposable
                 double gapMs = (ts - _lastMotionTicks) / TicksPerMs;
                 double pollMs = GetPollIntervalMs(hDevice);
                 int chunks = Math.Clamp((int)Math.Round(gapMs / pollMs), 1, MaxCurveChunks);
-                _curve.Apply(dx, dy, chunks, out dx, out dy);
+                curve.Apply(dx, dy, chunks, out dx, out dy);
             }
             _lastMotionTicks = ts;
             if (dx != 0 || dy != 0)

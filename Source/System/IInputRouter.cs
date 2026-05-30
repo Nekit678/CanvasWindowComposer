@@ -26,6 +26,7 @@ internal interface IInputRouter
 
     event Action? SearchHotkey;
     event Action? OverviewHotkey;
+    event Action? RecoveryHotkey;
 
     /// <summary>
     /// Raised when the user presses Esc while the Esc hotkey is enabled.

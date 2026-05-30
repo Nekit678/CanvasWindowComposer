@@ -74,6 +74,8 @@ LAYERED_WINDOW_ATTRIBUTES_FLAGS
 SetWindowRgn
 CreateRectRgn
 CreateRoundRectRgn
+DeleteObject
+DestroyIcon
 
 // Deferred window positioning
 BeginDeferWindowPos

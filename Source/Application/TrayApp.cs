@@ -43,8 +43,10 @@ internal sealed class TrayApp : ApplicationContext
         _vds = new VirtualDesktopService();
         _canvas = new Canvas();
         _input = new Win32InputRouter(_config);
+        _input.RecoveryHotkey += OnRecoveryHotkey;
         _wm = new WindowManager(_canvas, winApi, _config, _input, _clock, _vds, useAsyncProjection: true);
         _overview = new OverviewManager(_canvas, _wm, winApi, _input, _config, _screens);
+        _config.Changed += OnConfigChanged;
         _overview.Warmup();
         _foreground = new ForegroundCoordinator(_canvas, _overview, _input, _clock, _screens);
         _desktops = new DesktopStateCache(_canvas, _wm, _overview, _vds);
@@ -65,6 +67,10 @@ internal sealed class TrayApp : ApplicationContext
         {
             Checked = _config.ShowScreenFixedWindowsDuringPan
         };
+        var recoveryItem = new ToolStripMenuItem("Emergency Recovery", null, OnEmergencyRecovery)
+        {
+            ShortcutKeyDisplayString = "Ctrl+Alt+Shift+R"
+        };
         var refreshItem = new ToolStripMenuItem("Refresh", null, OnRefresh);
         var openConfigItem = new ToolStripMenuItem("Open Config Directory", null,
             (_, _) => System.Diagnostics.Process.Start("explorer.exe", AppConfig.ConfigDir));
@@ -75,6 +81,7 @@ internal sealed class TrayApp : ApplicationContext
         menu.Items.Add(new ToolStripSeparator());
         menu.Items.Add(toggleItem);
         menu.Items.Add(showScreenFixedItem);
+        menu.Items.Add(recoveryItem);
         menu.Items.Add(refreshItem);
         menu.Items.Add(openConfigItem);
         menu.Items.Add(new ToolStripSeparator());
@@ -117,6 +124,30 @@ internal sealed class TrayApp : ApplicationContext
         _wm.RefreshAllWindows();
     }
 
+    private void OnRecoveryHotkey()
+    {
+        RunEmergencyRecovery();
+    }
+
+    private void OnEmergencyRecovery(object? sender, EventArgs e)
+    {
+        RunEmergencyRecovery();
+    }
+
+    private void RunEmergencyRecovery()
+    {
+        _overview.CancelInertia();
+        if (_overview.CurrentMode != OverviewMode.Hidden)
+            _overview.TransitionTo(OverviewMode.Hidden, syncCameraOnClose: false);
+        if (_search.Visible)
+            _search.Hide();
+
+        _wm.EmergencyRecoverAllWindows();
+        _trayIcon.Text = _enabled
+            ? "Canvas Desktop - Recovery completed"
+            : "Canvas Desktop - Disabled";
+    }
+
     private void OnToggleScreenFixedWindowsDuringPan(object? sender, EventArgs e)
     {
         bool enabled = !_config.ShowScreenFixedWindowsDuringPan;
@@ -128,10 +159,17 @@ internal sealed class TrayApp : ApplicationContext
         _overview.RefreshConfig();
     }
 
+    private void OnConfigChanged()
+    {
+        _overview.RefreshConfig();
+    }
+
     private void OnExit(object? sender, EventArgs e)
     {
         _bgTimer.Stop();
         _bgTimer.Dispose();
+        _config.Changed -= OnConfigChanged;
+        _input.RecoveryHotkey -= OnRecoveryHotkey;
         _input.Dispose();
         _wm.Reset();
         _wm.Dispose();
@@ -169,7 +207,16 @@ internal sealed class TrayApp : ApplicationContext
         g.DrawLine(pen, cx, cy + len, cx - arrow, cy + len - arrow);
         g.DrawLine(pen, cx, cy + len, cx + arrow, cy + len - arrow);
 
-        return Icon.FromHandle(bmp.GetHicon());
+        IntPtr hIcon = bmp.GetHicon();
+        try
+        {
+            using var icon = Icon.FromHandle(hIcon);
+            return (Icon)icon.Clone();
+        }
+        finally
+        {
+            PInvoke.DestroyIcon((HICON)hIcon);
+        }
     }
 
     private static readonly string LogPath = Path.Combine(

@@ -152,7 +152,16 @@ internal sealed class SearchOverlay : Form
     private void ApplyRoundedRegion()
     {
         HRGN rgn = PInvoke.CreateRoundRectRgn(0, 0, Width, Height, _cornerRadius, _cornerRadius);
-        Region = Region.FromHrgn(rgn);
+        Region? oldRegion = Region;
+        try
+        {
+            Region = Region.FromHrgn(rgn);
+            oldRegion?.Dispose();
+        }
+        finally
+        {
+            PInvoke.DeleteObject((HGDIOBJ)rgn);
+        }
     }
 
     protected override void OnResize(EventArgs e)

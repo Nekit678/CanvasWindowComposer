@@ -66,6 +66,24 @@ public class WindowManagerTests
     }
 
     [Fact]
+    public void ReprojectWindow_UnclipsWindowThatMovesOnScreen()
+    {
+        var (canvas, api, wm) = Create();
+
+        canvas.SetWindow((IntPtr)1, 5000, 5000, 800, 600);
+        api.AddWindow((IntPtr)1, 0, 0, 800, 600);
+        wm.Reproject();
+        Assert.Contains((IntPtr)1, api.ClippedWindows);
+
+        canvas.SetWindow((IntPtr)1, 100, 100, 800, 600);
+        wm.ReprojectWindow((IntPtr)1);
+
+        Assert.DoesNotContain((IntPtr)1, api.ClippedWindows);
+        Assert.Equal(100, api.Windows[(IntPtr)1].X);
+        Assert.Equal(100, api.Windows[(IntPtr)1].Y);
+    }
+
+    [Fact]
     public void Reproject_SkipsMaximizedWindows()
     {
         var (canvas, api, wm) = Create();
@@ -285,6 +303,56 @@ public class WindowManagerTests
 
         Assert.DoesNotContain((IntPtr)1, api.ClippedWindows);
         Assert.Empty(canvas.Windows);
+    }
+
+    [Fact]
+    public void RemoveWindow_UnclipsBeforeDroppingTracking()
+    {
+        var (canvas, api, wm) = Create();
+
+        canvas.SetWindow((IntPtr)1, 5000, 5000, 800, 600);
+        api.AddWindow((IntPtr)1, 0, 0, 800, 600);
+        wm.Reproject();
+        Assert.Contains((IntPtr)1, api.ClippedWindows);
+
+        wm.RemoveWindow((IntPtr)1);
+
+        Assert.DoesNotContain((IntPtr)1, api.ClippedWindows);
+        Assert.False(canvas.HasWindow((IntPtr)1));
+    }
+
+    [Fact]
+    public void EmergencyRecoverAllWindows_MovesWindowsFullyOnScreenAndRebuildsCanvas()
+    {
+        var (canvas, api, wm) = Create();
+
+        canvas.SetWindow((IntPtr)1, 5000, 5000, 800, 600);
+        api.AddWindow((IntPtr)1, 0, 0, 800, 600);
+        wm.Reproject();
+        Assert.Contains((IntPtr)1, api.ClippedWindows);
+
+        wm.EmergencyRecoverAllWindows();
+
+        Assert.DoesNotContain((IntPtr)1, api.ClippedWindows);
+        Assert.Equal(1120, api.Windows[(IntPtr)1].X);
+        Assert.Equal(480, api.Windows[(IntPtr)1].Y);
+        Assert.True(canvas.HasWindow((IntPtr)1));
+        Assert.Equal(1120, canvas.Windows[(IntPtr)1].X);
+        Assert.Equal(480, canvas.Windows[(IntPtr)1].Y);
+    }
+
+    [Fact]
+    public void EmergencyRecoverAllWindows_UnclipsUnmanageableWindows()
+    {
+        var (_, api, wm) = Create();
+
+        api.AddWindow((IntPtr)1, 5000, 5000, 800, 600, manageable: false);
+        api.ClippedWindows.Add((IntPtr)1);
+
+        wm.EmergencyRecoverAllWindows();
+
+        Assert.DoesNotContain((IntPtr)1, api.ClippedWindows);
+        Assert.Empty(api.LastBatch);
     }
 
     [Fact]

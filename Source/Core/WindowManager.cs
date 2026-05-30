@@ -281,6 +281,32 @@ internal sealed class WindowManager : IDisposable
             return true;
 
         var r = _canvas.WorldToScreen(world);
+        bool onScreen = IsOnAnyScreen(r.X, r.Y, r.W, r.H);
+        bool wasClipped = _clippedWindows.Contains(hWnd);
+
+        if (!_config.DisableGreedyDraw && !SuspendGreedyDraw && !onScreen)
+        {
+            if (!wasClipped)
+            {
+                _win32.ClipWindow(hWnd);
+                _clippedWindows.Add(hWnd);
+            }
+
+            var (px, py) = ClampToScreenEdge(r.X, r.Y, r.W, r.H);
+            _win32.SetWindowPosition(hWnd, px, py, r.W, r.H,
+                (uint)(SET_WINDOW_POS_FLAGS.SWP_NOZORDER |
+                       SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE |
+                       SET_WINDOW_POS_FLAGS.SWP_NOSIZE));
+
+            _lastScreen[hWnd] = (px, py, r.W, r.H);
+            return true;
+        }
+
+        if (wasClipped)
+        {
+            _win32.UnclipWindow(hWnd);
+            _clippedWindows.Remove(hWnd);
+        }
 
         _win32.SetWindowPosition(hWnd, r.X, r.Y, r.W, r.H,
             (uint)(SET_WINDOW_POS_FLAGS.SWP_NOZORDER | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE));
@@ -364,9 +390,10 @@ internal sealed class WindowManager : IDisposable
     /// <summary>Drop a single window from canvas and internal tracking.</summary>
     public void RemoveWindow(IntPtr hWnd)
     {
+        if (_clippedWindows.Remove(hWnd))
+            _win32.UnclipWindow(hWnd);
         _canvas.RemoveWindow(hWnd);
         _lastScreen.Remove(hWnd);
-        _clippedWindows.Remove(hWnd);
     }
 
     /// <summary>Restore regions on all clipped windows (for overview thumbnails).</summary>
@@ -403,6 +430,55 @@ internal sealed class WindowManager : IDisposable
             }
             return true;
         });
+    }
+
+    /// <summary>
+    /// Last-resort recovery: cancel pending projections, clear every visible
+    /// window region, move manageable windows fully inside the nearest working
+    /// area, then rebuild the canvas around those real screen positions.
+    /// </summary>
+    public unsafe void EmergencyRecoverAllWindows()
+    {
+        _projection?.ClearPending();
+        SuspendGreedyDraw = false;
+        SuspendProjection = false;
+
+        uint ownPid = (uint)Environment.ProcessId;
+        var toMove = new List<BatchMoveItem>();
+
+        _clippedWindows.Clear();
+        _win32.EnumWindows(hWnd =>
+        {
+            if (!_win32.IsWindowVisible(hWnd))
+                return true;
+
+            _win32.UnclipWindow(hWnd);
+            PInvoke.RedrawWindow((HWND)hWnd, null, (HRGN)IntPtr.Zero,
+                REDRAW_WINDOW_FLAGS.RDW_INVALIDATE | REDRAW_WINDOW_FLAGS.RDW_ERASE |
+                REDRAW_WINDOW_FLAGS.RDW_FRAME | REDRAW_WINDOW_FLAGS.RDW_ALLCHILDREN);
+
+            if (!_win32.IsManageable(hWnd, ownPid))
+                return true;
+
+            var (x, y, w, h) = _win32.GetWindowRect(hWnd);
+            var current = new WindowRect(x, y, w, h);
+            var recovered = IsFullyOnAnyScreen(current)
+                ? current
+                : MoveIntoNearestScreen(current);
+
+            if (recovered != current)
+                toMove.Add(new BatchMoveItem(hWnd, recovered, PosOnly: false));
+
+            return true;
+        });
+
+        _win32.BatchMove(toMove, isAsync: false, isTransient: false);
+
+        _canvas.ResetCamera();
+        _canvas.ClearWindows();
+        _lastScreen.Clear();
+        DiscoverNewWindows();
+        SuspendReconcile = false;
     }
 
     /// <summary>Register a new window into the canvas from its screen position.</summary>
@@ -646,6 +722,20 @@ internal sealed class WindowManager : IDisposable
             int bottom = top + height;
             if (rx + rw > left && rx < right &&
                 ry + rh > top  && ry < bottom)
+                return true;
+        }
+        return false;
+    }
+
+    private bool IsFullyOnAnyScreen(WindowRect rect)
+    {
+        foreach (var (left, top, width, height) in _win32.GetScreenWorkingAreas())
+        {
+            int right = left + width;
+            int bottom = top + height;
+            if (rect.X >= left && rect.Y >= top &&
+                rect.X + rect.W <= right &&
+                rect.Y + rect.H <= bottom)
                 return true;
         }
         return false;

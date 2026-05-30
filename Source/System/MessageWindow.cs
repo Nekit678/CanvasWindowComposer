@@ -4,20 +4,27 @@ using System.Windows.Forms;
 namespace CanvasDesktop;
 
 /// <summary>
-/// Single hidden NativeWindow that handles WM_HOTKEY (Alt+S search, Alt+Q overview).
+/// Single hidden NativeWindow that handles WM_HOTKEY (Alt+S search, Alt+Q overview,
+/// Ctrl+Alt+Shift+R emergency recovery).
 /// </summary>
 internal sealed class MessageWindow : NativeWindow, IDisposable
 {
     private const int HOTKEY_SEARCH = 1;
     private const int HOTKEY_OVERVIEW = 2;
     private const int HOTKEY_ESCAPE = 3;
+    private const int HOTKEY_RECOVERY = 4;
     private const uint VK_S = 0x53;
     private const uint VK_Q = 0x51;
+    private const uint VK_R = 0x52;
     private const uint VK_ESCAPE = 0x1B;
 
     private Action? _onSearchHotkey;
     private Action? _onOverviewHotkey;
+    private Action? _onRecoveryHotkey;
     private Action? _onEscHotkey;
+    private bool _searchRegistered;
+    private bool _overviewRegistered;
+    private bool _recoveryRegistered;
     private bool _escRegistered;
 
     public MessageWindow()
@@ -25,18 +32,42 @@ internal sealed class MessageWindow : NativeWindow, IDisposable
         CreateHandle(new CreateParams());
     }
 
-    public void RegisterHandlers(Action? onSearchHotkey, Action? onOverviewHotkey)
+    public void RegisterHandlers(Action? onSearchHotkey, Action? onOverviewHotkey, Action? onRecoveryHotkey)
     {
+        if (_searchRegistered)
+        {
+            PInvoke.UnregisterHotKey((HWND)Handle, HOTKEY_SEARCH);
+            _searchRegistered = false;
+        }
+        if (_overviewRegistered)
+        {
+            PInvoke.UnregisterHotKey((HWND)Handle, HOTKEY_OVERVIEW);
+            _overviewRegistered = false;
+        }
+        if (_recoveryRegistered)
+        {
+            PInvoke.UnregisterHotKey((HWND)Handle, HOTKEY_RECOVERY);
+            _recoveryRegistered = false;
+        }
+
         _onSearchHotkey = onSearchHotkey;
         _onOverviewHotkey = onOverviewHotkey;
+        _onRecoveryHotkey = onRecoveryHotkey;
 
         // A null callback means "don't register the hotkey" — leaves it free
         // for other apps. Driven by DisableSearch / DisableZoomHotkey config.
         const HOT_KEY_MODIFIERS modifiers = HOT_KEY_MODIFIERS.MOD_ALT | HOT_KEY_MODIFIERS.MOD_NOREPEAT;
         if (onSearchHotkey != null)
-            PInvoke.RegisterHotKey((HWND)Handle, HOTKEY_SEARCH, modifiers, VK_S);
+            _searchRegistered = PInvoke.RegisterHotKey((HWND)Handle, HOTKEY_SEARCH, modifiers, VK_S);
         if (onOverviewHotkey != null)
-            PInvoke.RegisterHotKey((HWND)Handle, HOTKEY_OVERVIEW, modifiers, VK_Q);
+            _overviewRegistered = PInvoke.RegisterHotKey((HWND)Handle, HOTKEY_OVERVIEW, modifiers, VK_Q);
+
+        const HOT_KEY_MODIFIERS recoveryModifiers = HOT_KEY_MODIFIERS.MOD_CONTROL
+            | HOT_KEY_MODIFIERS.MOD_ALT
+            | HOT_KEY_MODIFIERS.MOD_SHIFT
+            | HOT_KEY_MODIFIERS.MOD_NOREPEAT;
+        if (onRecoveryHotkey != null)
+            _recoveryRegistered = PInvoke.RegisterHotKey((HWND)Handle, HOTKEY_RECOVERY, recoveryModifiers, VK_R);
     }
 
     /// <summary>
@@ -75,6 +106,9 @@ internal sealed class MessageWindow : NativeWindow, IDisposable
                 case HOTKEY_OVERVIEW:
                     _onOverviewHotkey?.Invoke();
                     return;
+                case HOTKEY_RECOVERY:
+                    _onRecoveryHotkey?.Invoke();
+                    return;
                 case HOTKEY_ESCAPE:
                     _onEscHotkey?.Invoke();
                     return;
@@ -86,8 +120,12 @@ internal sealed class MessageWindow : NativeWindow, IDisposable
 
     public void Dispose()
     {
-        PInvoke.UnregisterHotKey((HWND)Handle, HOTKEY_SEARCH);
-        PInvoke.UnregisterHotKey((HWND)Handle, HOTKEY_OVERVIEW);
+        if (_searchRegistered)
+            PInvoke.UnregisterHotKey((HWND)Handle, HOTKEY_SEARCH);
+        if (_overviewRegistered)
+            PInvoke.UnregisterHotKey((HWND)Handle, HOTKEY_OVERVIEW);
+        if (_recoveryRegistered)
+            PInvoke.UnregisterHotKey((HWND)Handle, HOTKEY_RECOVERY);
         if (_escRegistered)
             PInvoke.UnregisterHotKey((HWND)Handle, HOTKEY_ESCAPE);
         DestroyHandle();

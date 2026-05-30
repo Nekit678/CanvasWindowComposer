@@ -340,6 +340,17 @@ public class CanvasTests
     }
 
     [Fact]
+    public void CollapseWindow_DemotesZOrder()
+    {
+        var canvas = new Canvas();
+        canvas.SetWindow((IntPtr)1, 100, 200, 800, 600);
+
+        canvas.CollapseWindow((IntPtr)1);
+
+        Assert.Equal(-1, canvas.Windows[(IntPtr)1].ZOrder);
+    }
+
+    [Fact]
     public void ExpandWindow_ClearsCollapsed()
     {
         var canvas = new Canvas();

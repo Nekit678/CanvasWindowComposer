@@ -294,10 +294,11 @@ internal sealed class Canvas
         if (old == state) return;
 
         r.State = state;
-        _windows[hWnd] = r;
 
         if (state == WindowState.Minimized)
             r.ZOrder = -1;
+        _windows[hWnd] = r;
+
         if (old == WindowState.Minimized || state == WindowState.Minimized)
             CollapseChanged?.Invoke(hWnd);
         if (old == WindowState.Maximized || state == WindowState.Maximized)

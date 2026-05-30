@@ -79,7 +79,7 @@ internal sealed class VirtualDesktopService : IVirtualDesktops, IDisposable
             try
             {
                 Guid newId = DetectCurrentDesktop();
-                if (newId == Guid.Empty || newId == _currentDesktopId) continue;
+                if (newId == _currentDesktopId) continue;
 
                 _currentDesktopId = newId;
                 Action? handler = DesktopChanged;

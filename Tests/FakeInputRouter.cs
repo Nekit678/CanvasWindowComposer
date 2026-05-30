@@ -10,6 +10,7 @@ internal sealed class FakeInputRouter : IInputRouter
     public event Action? ButtonDown;
     public event Action? SearchHotkey;
     public event Action? OverviewHotkey;
+    public event Action? RecoveryHotkey;
     public event Action? EscPressed;
 
     public int EnableEscHotkeyCalls;
@@ -130,6 +131,11 @@ internal sealed class FakeInputRouter : IInputRouter
     public void RaiseOverviewHotkey()
     {
         OverviewHotkey?.Invoke();
+    }
+
+    public void RaiseRecoveryHotkey()
+    {
+        RecoveryHotkey?.Invoke();
     }
 
     public void RaiseWindowMinimized(IntPtr h)

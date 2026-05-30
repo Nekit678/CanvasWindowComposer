@@ -18,7 +18,7 @@ Turns your Windows desktop into an infinite, pannable, zoomable canvas. Middle-c
 - **Virtual desktops** — Independent canvas per desktop
 - **Auto-focus** — Camera follows focused windows
 - **Off-screen hiding** — Windows hidden when panned out of view
-- **System tray** — Toggle, reset, exit
+- **System tray** — Toggle, emergency recovery, refresh, exit
 
 ## Controls
 
@@ -28,11 +28,13 @@ Turns your Windows desktop into an infinite, pannable, zoomable canvas. Middle-c
 | Alt + middle-click drag anywhere | Pan (works over windows) |
 | Alt + Q | Toggle overview (map-view) |
 | Alt + scroll | Zoom in/out around cursor (opens overview if closed) |
+| Ctrl + Alt + Shift + R | Emergency recovery: unclip and bring managed windows back on-screen |
 | Overview: click window | Switch to that window |
 | Overview: drag window | Move that window on the canvas |
 | Overview: click window close button | Request that window to close |
 | Alt + S | Fuzzy window search |
 | Tray menu > Enabled | Toggle the canvas on/off |
+| Tray menu > Emergency Recovery | Unclip and bring managed windows back on-screen |
 | Tray menu > Refresh | Unclip and redraw all windows |
 
 ## How it works
