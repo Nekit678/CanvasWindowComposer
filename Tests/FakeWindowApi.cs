@@ -19,6 +19,7 @@ internal sealed class FakeWindowApi : IWindowApi
     public readonly HashSet<IntPtr> ClippedWindows = new();
     public readonly List<BatchMoveItem> LastBatch = new();
     public readonly List<(IntPtr hWnd, int x, int y, int w, int h, uint flags)> SetPositionCalls = new();
+    public readonly List<IntPtr> CloseRequests = new();
     public List<(int x, int y, int w, int h)> ScreenAreas = new() { (0, 0, 1920, 1080) };
 
     // Windows returned by EnumWindows, in order
@@ -79,6 +80,8 @@ internal sealed class FakeWindowApi : IWindowApi
             win.X = x; win.Y = y; win.W = w; win.H = h;
         }
     }
+
+    public void RequestCloseWindow(IntPtr hWnd) => CloseRequests.Add(hWnd);
 
     public void ClipWindow(IntPtr hWnd) => ClippedWindows.Add(hWnd);
 

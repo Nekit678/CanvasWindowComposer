@@ -32,6 +32,7 @@ internal interface IWindowApi
 
     // Mutation
     void SetWindowPosition(IntPtr hWnd, int x, int y, int w, int h, uint flags);
+    void RequestCloseWindow(IntPtr hWnd);
     void ClipWindow(IntPtr hWnd);
     void UnclipWindow(IntPtr hWnd);
     /// <summary>

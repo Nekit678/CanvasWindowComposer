@@ -10,6 +10,8 @@ namespace CanvasDesktop;
 /// </summary>
 internal sealed class Win32WindowApi : IWindowApi
 {
+    private const uint WmClose = 0x0010;
+
     private readonly IScreens _screens;
 
     public Win32WindowApi(IScreens? screens = null)
@@ -149,6 +151,11 @@ internal sealed class Win32WindowApi : IWindowApi
     public void SetWindowPosition(IntPtr hWnd, int x, int y, int w, int h, uint flags)
     {
         PInvoke.SetWindowPos((HWND)hWnd, HWND.Null, x, y, w, h, (SET_WINDOW_POS_FLAGS)flags);
+    }
+
+    public void RequestCloseWindow(IntPtr hWnd)
+    {
+        PInvoke.PostMessage((HWND)hWnd, WmClose, 0, 0);
     }
 
     public void ClipWindow(IntPtr hWnd)

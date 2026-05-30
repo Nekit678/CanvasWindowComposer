@@ -28,6 +28,8 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
 
     private const double ExtentsPaddingRatio = 0.1;
     private const double MouseWheelDeltaPerNotch = 120.0;
+    private const int ClickDragThresholdPx = 4;
+    private const int ClickDragThresholdSq = ClickDragThresholdPx * ClickDragThresholdPx;
     private static readonly string[] MyDockFinderProcessHints =
     {
         "mydockfinder",
@@ -71,13 +73,17 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
     // All DWM thumbnail state (desktop + taskbars + per-window). Owned here
     // so it can reference _passes; OverviewManager only drives lifecycle.
     private readonly OverviewThumbnails _thumbnails;
+    private readonly OverviewCloseButtons _closeButtons;
 
     // Pan/drag state (virtual-screen coords)
     private bool _panning;
     private int _panStartVx, _panStartVy;
     private bool _draggingWindow;
-    private int _dragIndex = -1;
+    private bool _dragMovedWindow;
+    private IntPtr _dragHWnd;
     private int _dragStartVx, _dragStartVy;
+    private int _dragOriginVx, _dragOriginVy;
+    private bool _windowRefreshQueued;
 
     public OverviewManager(Canvas mainCanvas, WindowManager wm, IWindowApi win32, IInputRouter input, IAppConfig appConfig, IScreens? screens = null)
     {
@@ -90,8 +96,13 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
         _camera = new OverviewCamera(_screens);
         _windows = new OverviewWindowList(mainCanvas, win32);
         _thumbnails = new OverviewThumbnails(_passes, _windows, _camera, _state, _win32, _screens);
+        _closeButtons = new OverviewCloseButtons(_passes, _windows, _camera, _win32, RequestCloseWindow);
 
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged += OnDisplaySettingsChanged;
+        _input.WindowShown += OnOverviewWindowSetChanged;
+        _input.WindowDestroyed += OnOverviewWindowSetChanged;
+        _input.WindowRestored += OnOverviewWindowSetChanged;
+        _input.WindowMinimized += OnOverviewWindowSetChanged;
 
         // Reference held only to keep the binding alive for the lifetime of this manager.
         _ = new OverviewInputs(this, input, mainCanvas);
@@ -112,6 +123,7 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
 
         if (wasVisible)
             TransitionTo(OverviewMode.Hidden, syncCameraOnClose: false);
+        _closeButtons.Hide();
 
         foreach (var p in _passes)
         {
@@ -245,7 +257,7 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
 
         foreach (var p in _passes)
             p.Grid?.UpdateCamera(_camera.X, _camera.Y, _camera.Zoom);
-        _thumbnails.Reconcile();
+        ReconcileOverviewVisuals();
     }
 
     /// <summary>Single entry point for every mode change.</summary>
@@ -293,6 +305,8 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
         if (_passes.Count > 0) _passes[0].Activate();
         if (ShouldShowScreenFixedWindowsDuringPan)
             RaiseMyDockFinderWindowsAboveOverview();
+        else if (CurrentMode == OverviewMode.Zooming)
+            RaiseOverviewPassesAboveTopmostWindows();
 
         // Attach frame tick to the first pass's grid (drives inertia)
         if (_passes.Count > 0 && _passes[0].Grid != null)
@@ -300,10 +314,14 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
 
         foreach (var p in _passes)
             p.Grid?.Start(_camera.X, _camera.Y, _camera.Zoom);
+        ReconcileOverviewVisuals();
     }
 
     private void HideInternal(bool syncCamera)
     {
+        _windowRefreshQueued = false;
+        _closeButtons.Hide();
+
         foreach (var p in _passes)
         {
             if (p.Grid != null) p.Grid.OnFrameTick = null;
@@ -351,11 +369,12 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
             p.SetModeStyle(wantLayered, wantNoActivate);
             p.SetClickThrough(!_cfg.InputEnabled);
         }
-        _thumbnails.Reconcile();
+        ReconcileOverviewVisuals();
         if (ShouldShowScreenFixedWindowsDuringPan && AnyPassVisible())
             RaiseMyDockFinderWindowsAboveOverview();
         else if (CurrentMode == OverviewMode.Zooming && AnyPassVisible())
             RaiseOverviewPassesAboveTopmostWindows();
+        _closeButtons.Reconcile(CurrentMode == OverviewMode.Zooming && AnyPassVisible());
 
         // During Zooming, real-window positions don't need to track the camera
         // (click-through is off — clicks land on the overview form, not real
@@ -487,7 +506,7 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
             SET_WINDOW_POS_FLAGS.SWP_NOMOVE | SET_WINDOW_POS_FLAGS.SWP_NOSIZE | SET_WINDOW_POS_FLAGS.SWP_NOACTIVATE);
 
         _thumbnails.BringToFront(hWnd);
-        _thumbnails.Reconcile();
+        ReconcileOverviewVisuals();
     }
 
     // ==================== INPUT ====================
@@ -535,7 +554,7 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
 
         foreach (var p in _passes)
             p.Grid?.UpdateCamera(_camera.X, _camera.Y, _camera.Zoom);
-        _thumbnails.Reconcile();
+        ReconcileOverviewVisuals();
     }
 
     private void HandleMouseDown(OverviewOverlay pass, MouseEventArgs e)
@@ -555,11 +574,15 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
             int hit = _windows.HitTest(wx, wy);
             if (hit >= 0)
             {
+                IntPtr hWnd = _windows.Windows[hit].HWnd;
                 BringWindowToFront(hit);
                 _draggingWindow = true;
-                _dragIndex = 0;
+                _dragMovedWindow = false;
+                _dragHWnd = hWnd;
                 _dragStartVx = vx;
                 _dragStartVy = vy;
+                _dragOriginVx = vx;
+                _dragOriginVy = vy;
                 return;
             }
 
@@ -582,21 +605,36 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
         int vx = e.X + pass.OriginX;
         int vy = e.Y + pass.OriginY;
 
-        if (_draggingWindow && _dragIndex >= 0 && _dragIndex < _windows.Count)
+        if (_draggingWindow && _dragHWnd != IntPtr.Zero)
         {
+            int dragIndex = IndexOfWindow(_dragHWnd);
+            if (dragIndex < 0)
+            {
+                ClearWindowDrag();
+                return;
+            }
+
+            if (!_dragMovedWindow)
+            {
+                if (!MovedBeyondClickThreshold(vx, vy, _dragOriginVx, _dragOriginVy))
+                    return;
+                _dragMovedWindow = true;
+            }
+
             double dx = (vx - _dragStartVx) / _camera.Zoom;
             double dy = (vy - _dragStartVy) / _camera.Zoom;
             _dragStartVx = vx;
             _dragStartVy = vy;
 
-            _windows.TranslateAt(_dragIndex, dx, dy);
-            var entry = _windows.Windows[_dragIndex];
+            _windows.TranslateAt(dragIndex, dx, dy);
+            var entry = _windows.Windows[dragIndex];
             _thumbnails.UpdateWorldRect(entry.HWnd, entry.World);
 
             _mainCanvas.SetWindow(entry.HWnd, entry.World.X, entry.World.Y, entry.World.W, entry.World.H);
-            _thumbnails.Reconcile();
+            ReconcileOverviewVisuals();
         }
-        else if (_panning)
+
+        if (_panning)
         {
             int dx = vx - _panStartVx;
             int dy = vy - _panStartVy;
@@ -612,7 +650,7 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
                 p.Grid?.AccumulatePan(worldDx, worldDy);
                 p.Grid?.UpdateCamera(_camera.X, _camera.Y, _camera.Zoom);
             }
-            _thumbnails.Reconcile();
+            ReconcileOverviewVisuals();
         }
     }
 
@@ -620,9 +658,29 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
     {
         if (_draggingWindow)
         {
-            _wm.Reproject(true);
+            IntPtr clickHWnd = _dragHWnd;
+            bool wasClick = !_dragMovedWindow;
+            ClearWindowDrag();
+
+            if (wasClick && e.Button == MouseButtons.Left)
+            {
+                int clickIndex = IndexOfWindow(clickHWnd);
+                if (clickIndex >= 0)
+                {
+                    var entry = _windows.Windows[clickIndex];
+                    GoToWindow(entry.HWnd, entry.World);
+                }
+            }
+            else
+            {
+                _wm.Reproject(true);
+            }
+        }
+        else
+        {
             _draggingWindow = false;
-            _dragIndex = -1;
+            _dragMovedWindow = false;
+            _dragHWnd = IntPtr.Zero;
         }
         _panning = false;
     }
@@ -640,7 +698,7 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
         foreach (var p in _passes)
             p.Grid?.UpdateCamera(_camera.X, _camera.Y, _camera.Zoom);
 
-        _thumbnails.Reconcile();
+        ReconcileOverviewVisuals();
     }
 
     private void HandleDoubleClick(OverviewOverlay pass, MouseEventArgs e)
@@ -673,12 +731,87 @@ internal sealed class OverviewManager : IDisposable, IOverviewController
         TransitionTo(OverviewMode.Hidden, syncCameraOnClose: false);
     }
 
+    private void RequestCloseWindow(IntPtr hWnd)
+    {
+        if (hWnd == IntPtr.Zero) return;
+
+        _win32.RequestCloseWindow(hWnd);
+        QueueOverviewWindowRefresh();
+    }
+
+    private void ClearWindowDrag()
+    {
+        _draggingWindow = false;
+        _dragMovedWindow = false;
+        _dragHWnd = IntPtr.Zero;
+    }
+
+    private static bool MovedBeyondClickThreshold(int vx, int vy, int startVx, int startVy)
+    {
+        int dx = vx - startVx;
+        int dy = vy - startVy;
+        return dx * dx + dy * dy >= ClickDragThresholdSq;
+    }
+
+    private int IndexOfWindow(IntPtr hWnd)
+    {
+        for (int i = 0; i < _windows.Count; i++)
+        {
+            if (_windows.Windows[i].HWnd == hWnd)
+                return i;
+        }
+        return -1;
+    }
+
+    private void OnOverviewWindowSetChanged(IntPtr _)
+    {
+        QueueOverviewWindowRefresh();
+    }
+
+    private void QueueOverviewWindowRefresh()
+    {
+        if (CurrentMode == OverviewMode.Hidden || _windowRefreshQueued)
+            return;
+
+        if (_passes.Count == 0 || !_passes[0].IsHandleCreated)
+        {
+            RefreshOverviewWindows();
+            return;
+        }
+
+        _windowRefreshQueued = true;
+        _passes[0].BeginInvoke(() =>
+        {
+            _windowRefreshQueued = false;
+            RefreshOverviewWindows();
+        });
+    }
+
+    private void RefreshOverviewWindows()
+    {
+        if (CurrentMode == OverviewMode.Hidden) return;
+
+        _windows.Refresh(includeScreenFixedWindows: ShouldShowScreenFixedWindowsDuringPan);
+        ReconcileOverviewVisuals();
+    }
+
+    private void ReconcileOverviewVisuals()
+    {
+        _thumbnails.Reconcile();
+        _closeButtons.Reconcile(CurrentMode == OverviewMode.Zooming && AnyPassVisible());
+    }
+
     public void Dispose()
     {
         Microsoft.Win32.SystemEvents.DisplaySettingsChanged -= OnDisplaySettingsChanged;
+        _input.WindowShown -= OnOverviewWindowSetChanged;
+        _input.WindowDestroyed -= OnOverviewWindowSetChanged;
+        _input.WindowRestored -= OnOverviewWindowSetChanged;
+        _input.WindowMinimized -= OnOverviewWindowSetChanged;
 
         if (CurrentMode != OverviewMode.Hidden)
             TransitionTo(OverviewMode.Hidden, syncCameraOnClose: false);
+        _closeButtons.Dispose();
         foreach (var p in _passes)
         {
             p.Close();
